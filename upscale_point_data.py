@@ -1,40 +1,28 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Apr 30 14:39:54 2018
-@author: RRealR
-Based on this code: https://goo.gl/e7Kp4X
-"""
+""" Rasteriza precipitation
+    Author
+    ------
+        Roberto A. Real-Rangel (Institute of Engineering UNAM; Mexico)
 
-# For more info about the geostatsmodels module, go to https://bit.ly/2vFNGOx
-from netCDF4 import Dataset, date2num
+    License
+    -------
+        GNU General Public License version 3
+"""
 from pathlib2 import Path
 from pyproj import Proj, transform
-from read_vector_map import read_station_map, read_elevation_map
 from scipy.spatial import distance_matrix
-import gc
+import gdal
 import numpy as np
 import pandas as pd
 import sys
-import time
+import toml
+import xarray as xr
+
+with open('config.toml', 'rb') as config_file:
+    config = toml.load(config_file)
 
 
-# Set some initial parameters
-station_map_file_name = Path(
-        'C:/Users/rreal/OneDrive/documentos/proyectos/2017/'
-        'evaluacion_gldas_merra/analisis/precipitation/inputs/'
-        'climatological_stations.shp')
-stations_data_file_name = Path(
-        'C:/Users/rreal/OneDrive/documentos/proyectos/2017/'
-        'evaluacion_gldas_merra/analisis/precipitation/inputs/'
-        'precipitation_database_1980-2015.csv')
-elevation_map_file_name = Path(
-        'C:/Users/rreal/OneDrive/documentos/proyectos/2017/'
-        'evaluacion_gldas_merra/analisis/precipitation/inputs/'
-        'Republica30_R100md.shp')
-maxMissedData = 0.20
-
-
-class Grid:
+class GridDataset:
     def __init__(self, xmin, xmax, ymin, ymax, xres, yres):
         self.xmin = xmin
         self.xmax = xmax
@@ -77,16 +65,13 @@ class Grid:
         return(output)
 
 
-def progress_bar(current, total, item_id=''):
+def progress_bar(current, total, message="- Processing"):
+    # TODO: Add a customized text about what process is being performed.
     progress = float(current)/total
 
-    if item_id == '':
-        sys.stdout.write("\r        Processing item {} of {} ({:.1f} %)".
-                         format(current, total, progress * 100))
-
-    else:
-        sys.stdout.write("\r        Processing {} (progress: {:.1f} %)".
-                         format(item_id, progress * 100))
+    sys.stdout.write(
+            "\r    {} ({:.1f} % processed)".format(
+                    message, progress * 100))
 
     if progress < 1:
         sys.stdout.flush()
@@ -95,28 +80,58 @@ def progress_bar(current, total, item_id=''):
         sys.stdout.write('\n')
 
 
-def station_location(station_time_series, station_attributes, elevation):
-    stations_x = np.array(
-            [station_attributes[i]['LONGITUDE'] for i in
-             station_time_series.keys()])
-    stations_y = np.array(
-            [station_attributes[i]['LATITUDE'] for i in
-             station_time_series.keys()])
-    stations_z = np.array(
-            [station_attributes[i]['ELEVATION'] for i in
-             station_time_series.keys()])
-    return(stations_x[np.isfinite(station_cross_section)],
-           stations_y[np.isfinite(station_cross_section)],
-           stations_z[np.isfinite(station_cross_section)])
+def gen_database(input_dir):
+    """ Read precipitation from all station files and generate a
+    pandas.Dataframe whit them.
+    """
+    input_list = sorted(list(Path(input_dir).glob(pattern='**/*.nc')))
+    prec_database = xr.Dataset()
+
+    for inpf, input_file in enumerate(input_list):
+        # Get the station data.
+        vars2drop = [i for i in xr.open_dataset(input_file).var().keys()
+                     if 'precipitation'not in i]
+        dataset = xr.open_dataset(input_file, drop_variables=vars2drop)
+
+        # Remove other variables not precipitation.
+        tests = [i for i in dataset.var().keys() if i != 'precipitation']
+        is_outlier = dataset[tests[0]]
+
+        # Remove suspicious values.
+        for test in tests:
+            is_outlier = (is_outlier | dataset[test])
+
+        dataset['precipitation'][is_outlier] = np.nan
+
+        # Remove from database stations with less than 10 years of data.
+        if float(dataset['precipitation'].notnull().sum() / 365.) < 10:
+            pass
+
+        else:
+            # TODO: Perform a test to filter too porous datasets. This
+            # test will not take into account years without data.
+            # gaps = float(dataset['precipitation'].isnull().sum(dim='time'))
+            # (gaps / dataset['precipitation'].size) > threshold
+
+            prec_database[dataset.attrs['ID']] = (
+                    dataset['precipitation'].copy())
+            is_outlier = is_outlier.reindex(time=sorted(
+                    prec_database.time.values)).astype('bool')
+            progress_bar(
+                    current=(inpf + 1), total=len(input_list),
+                    message=("- Retrieving precipitation data from all "
+                             "climatological stations"))
+
+    return(prec_database.to_dataframe())
 
 
-def interpolate_idw(near_stations, station_value, power=2):
+def interpolate_idw(distances, values, power=2):
     nominator = 0
     denominator = 0
 
-    for i in range(len(near_stations)):
-        value = station_value.loc[near_stations.index[i]]
-        distance = near_stations[i]
+    for i in range(len(distances)):
+        value = values.loc[distances.index[i]]
+        distance = distances[i]
         nominator += (value / pow(distance, power))
         denominator += (1 / pow(distance, power))
 
@@ -127,185 +142,158 @@ def interpolate_idw(near_stations, station_value, power=2):
         return(np.nan)
 
 
-def create_nc4(output_file, input_time, input_lat, input_lon, input_values):
-    with Dataset(output_file, 'w', format='NETCDF4') as rootgrp:
-        # rootgrp = Dataset(out, 'w')
-        rootgrp.History = 'Created on ' + time.ctime(time.time())
-        rootgrp.Source = 'Institute of Engineering UNAM'
-        rootgrp.Description = ("Ground-based precipitation")
-        rootgrp.createDimension('time', len(input_time))
-        rootgrp.createDimension('lat', len(input_lat))
-        rootgrp.createDimension('lon', len(input_lon))
+def retrieve_dem_coords(input_file):
+    """ List the centroids of the cells in a raster map.
+    Parameters
+        input_file: string
 
-        # Define time variable
-        t = rootgrp.createVariable(
-                varname='time', datatype='f4', dimensions=('time',), zlib=True,
-                fill_value=-32768)
-        t.units = 'days since 1980-01-01'
-        t[:] = input_time
+    References
+        https://bit.ly/2Ewwihq
+    """
+    driver = gdal.GetDriverByName('GTiff')
+    raster = gdal.Open(input_file)
+    (x_min, x_size, x_rotation, y_max, y_rotation, y_size) = (
+            raster.GetGeoTransform())
+    cols = raster.RasterXSize
+    rows = raster.RasterYSize
+    x_coords = np.arange(cols) * x_size + x_min + (x_size / 2)
+    y_coords = np.arange(rows) * y_size + y_max + (y_size / 2)
+    return([(x, y) for y in y_coords for x in x_coords])
 
-        # Define latitude (Y coordinate) variable
-        lat = rootgrp.createVariable(
-                varname='lat', datatype='f4', dimensions=('lat',), zlib=True,
-                fill_value=np.nan)
-        lat.units = 'Degrees north'
-        lat[:] = input_lat
 
-        # Define longitude (X coordinate) variable
-        lon = rootgrp.createVariable(
-                varname='lon', datatype='f4', dimensions=('lon',), zlib=True,
-                fill_value=np.nan)
-        lon.units = 'Degrees east'
-        lon[:] = input_lon
+def retrieve_dem_elev(input_file, points_list, nodata=-32768):
+    """ Retrieve pixel value with coordinates as input.
+    Parameters
+        input_file: string
+        points_list: list of tuples
 
-        # Define main variable
-        precipitation = rootgrp.createVariable(
-                varname='precipitation', datatype='f4',
-                dimensions=('time', 'lat', 'lon',), zlib=True,
-                fill_value=np.nan)
-        precipitation.units = 'mm'
-        precipitation[:] = input_values
+    Reference
+        https://bit.ly/2VkQvML
+    """
+    # TODO: Retrieve the elevation of climatological stations from the
+    # DEM, instead of the metadata.
+    driver = gdal.GetDriverByName('GTiff')
+    raster = gdal.Open(input_file)
+    band = raster.GetRasterBand(1)
+    cols = raster.RasterXSize
+    rows = raster.RasterYSize
+    (x_min, x_size, x_rotation, y_max, y_rotation, y_size) = (
+            raster.GetGeoTransform())
+    x_max = x_min + (cols * x_size)
+    y_min = y_max - (rows * abs(y_size))
+    data = band.ReadAsArray(0, 0, cols, rows)
+    output = []
+
+    for point in points_list:
+        x = point[0]
+        y = point[1]
+
+        if (x_min < x < x_max) & (y_min < y < y_max):
+            col = int((point[0] - x_min) / x_size)
+            row = int((y_max - point[1]) / abs(y_size))
+
+            if float(data[row][col]) != nodata:
+                output.append([point[0], point[1], float(data[row][col])])
+
+    return(output)
 
 
 if __name__ == "__main__":
-    # Import initial data.
-    station_time_series = pd.read_csv(
-        filepath_or_buffer=str(stations_data_file_name), index_col=0,
-        parse_dates=True)
-    station_attributes = read_station_map(str(station_map_file_name))
-    elevation = read_elevation_map(str(elevation_map_file_name))
+    station_time_series = gen_database(
+            input_dir=config['datasets']['climatological_data'])
 
-    # Reproject coordinates to get distances in meters (not in degrees).
-    elevation['centroid_x_lcc'] = np.empty(
-            shape=(np.shape(elevation['centroid_x']))) * np.nan
-    elevation['centroid_y_lcc'] = np.empty(
-            shape=(np.shape(elevation['centroid_y']))) * np.nan
+    attrs = {}
+    input_list = sorted(list(Path(
+            config['datasets']['climatological_data']).glob(
+                    pattern='**/*.nc')))
 
-    for i in range(len(elevation['elevation'])):
-        elevation['centroid_x_lcc'][i], elevation['centroid_y_lcc'][i] = (
-                transform(Proj(init='EPSG:4326'), Proj(init='EPSG:6362'),
-                          elevation['centroid_x'][i],
-                          elevation['centroid_y'][i]))
+    for st, station in enumerate(input_list):
+        code = xr.open_dataset(station).attrs['ID']
+        attrs[code] = dict(xr.open_dataset(station).attrs)
+        attrs[code]['X_epsg4326'] = attrs[code].pop('LONGITUDE')
+        attrs[code]['X_epsg4326'] = float(attrs[code]['X_epsg4326'])
+        attrs[code]['Y_epsg4326'] = attrs[code].pop('LATITUDE')
+        attrs[code]['Y_epsg4326'] = float(attrs[code]['Y_epsg4326'])
+        attrs[code]['Z_epsg4326'] = attrs[code].pop('ELEVATION')
+        attrs[code]['Z_epsg4326'] = float(attrs[code]['Z_epsg4326'])
+        (attrs[code]['X_epsg6372'],
+         attrs[code]['Y_epsg6372'],
+         attrs[code]['Z_epsg6372']) = transform(
+                p1=Proj(init='EPSG:4326'),
+                p2=Proj(init='EPSG:6372'),
+                x=attrs[code]['X_epsg4326'],
+                y=attrs[code]['Y_epsg4326'],
+                z=attrs[code]['Z_epsg4326'])
+        progress_bar(
+                st + 1, len(input_list),
+                message="- Transforming projections of stations coordinates")
 
-    date_groups = [(year, month)
-                   for year
-                   in list(set([date.year
-                                for date
-                                in station_time_series.index]))
-                   for month
-                   in range(1, 13)]
+    years = range(
+            station_time_series.index[0].year,
+            station_time_series.index[-1].year + 1)
 
-    for group in date_groups:
-        year = group[0]
-        month = group[1]
-        print("Interpolating records of {}-{}".format(
-                year, str(month).zfill(2)))
-        auxiliar_base = []
-        auxiliar_gldas25 = []
-        auxiliar_gldas10 = []
-        auxiliar_merra = []
-        group_indices = station_time_series.loc[
-                    str(year)+'-'+str(month)].index
+    for yy, year in enumerate(years):
+        aux = []
+        group_indices = station_time_series.loc[str(year)].index
 
         for count, date in enumerate(group_indices):
-            progress_bar(count, len(group_indices))
-
-            # Creating the output grid and populating the output matrix value
-            base = Grid(-118, -86, 14, 34, 0.1, 0.1)
-            gldas25 = Grid(-118, -86, 14, 34, 0.25, 0.25)
-            gldas10 = Grid(-118, -86, 14, 34, 1.0, 1.0)
-            merra = Grid(-118.4375, -86, 13.75, 34, 0.625, 0.5)
+            # Creating the output grid and populating the output matrix value.
+            # TODO: Read edges from config file.
+            basin_grid = GridDataset(
+                    xmin=3433000,
+                    xmax=3454200,
+                    ymin=612300,
+                    ymax=649700,
+                    xres=500,
+                    yres=500)
 
             # Get available data for the given date.
-            station_cross_section = station_time_series.xs(date)
-            stations_x, stations_y, stations_z = station_location(
-                    station_time_series, station_attributes, elevation)
-            stations_x_lcc = np.zeros(stations_x.shape) * np.nan
-            stations_y_lcc = np.zeros(stations_y.shape) * np.nan
-            for i in range(len(stations_x)):
-                stations_x_lcc[i], stations_y_lcc[i] = transform(
-                        Proj(init='EPSG:4326'), Proj(init='EPSG:6362'),
-                        stations_x[i], stations_y[i])
-            station_cross_section = station_cross_section[
-                    np.isfinite(station_cross_section)]
+            values = station_time_series.xs(date).dropna()
 
             # Generate a distance matrix for the grid and the data.
-            stations_points = zip(
-                    stations_x_lcc,
-                    stations_y_lcc,
-                    stations_z)
-            grid_points = zip(
-                    elevation['centroid_x_lcc'],
-                    elevation['centroid_y_lcc'],
-                    elevation['elevation'])
+            stations_points = [
+                    (attrs[i]['X_epsg6372'], attrs[i]['Y_epsg6372'],
+                     attrs[i]['Z_epsg6372']) for i in values.keys()]
+            grid_cells = retrieve_dem_elev(
+                    input_file=config['raster_maps']['dem'],
+                    points_list=[(x, y)
+                                 for y in basin_grid.y
+                                 for x in basin_grid.x])
             distmat = pd.DataFrame(
-                    distance_matrix(x=grid_points, y=stations_points),
-                    columns=station_cross_section.index)
-            max_distance = 50000   # 50 km
+                    distance_matrix(x=grid_cells, y=stations_points),
+                    columns=values.index)
+
+            # TODO: Move this variable to the config file.
+            max_distance = 100000   # 100 km
 
             # Apply the IDW interpolation.
-            for i in range(len(distmat)):
-                x = elevation['centroid_x'][i]
-                y = elevation['centroid_y'][i]
-                base_x_index = np.where(base.x == x)[0]
-                base_y_index = np.where(base.y == y)[0]
-                cell_distances = distmat.iloc[i]
-                near_stations = cell_distances[(cell_distances < max_distance)]
-                base.values[base_y_index, base_x_index] = interpolate_idw(
-                        near_stations, station_cross_section, power=2)
+            for c, cell in enumerate(grid_cells):
+                x_index = np.where(basin_grid.x == cell[0])[0]
+                y_index = np.where(basin_grid.y == cell[1])[0]
+                cell_distances = distmat.iloc[c]
+                distances = cell_distances[(cell_distances < max_distance)]
 
-            gldas25.values = base.resample(new_grid=gldas25)
-            gldas25.values = gldas25.filter_by_stations(
-                    stations_x, stations_y, min_stations=1)
-            gldas10.values = base.resample(new_grid=gldas10)
-            gldas10.values = gldas10.filter_by_stations(
-                    stations_x, stations_y, min_stations=1)
-            merra.values = base.resample(new_grid=merra)
-            merra.values = merra.filter_by_stations(
-                    stations_x, stations_y, min_stations=1)
+                if len(distances) > 0:
+                    basin_grid.values[y_index, x_index] = interpolate_idw(
+                            distances=distances,
+                            values=values,
+                            power=2)
 
-            auxiliar_base.append(np.expand_dims(base.values, axis=0))
-            auxiliar_gldas25.append(np.expand_dims(gldas25.values, axis=0))
-            auxiliar_gldas10.append(np.expand_dims(gldas10.values, axis=0))
-            auxiliar_merra.append(np.expand_dims(merra.values, axis=0))
-            progress_bar(count+1, len(group_indices))
+            aux.append(np.expand_dims(basin_grid.values, axis=0))
 
-        input_time = date2num(
-                [i.replace(tzinfo=None)
-                 for i in group_indices.to_pydatetime()],
-                'days since 1980-01-01')
+        output_dataarray = xr.DataArray(
+                data=np.vstack(aux),
+                coords={'time': group_indices,
+                        'north': basin_grid.y,
+                        'east': basin_grid.x},
+                dims=['time', 'north', 'east'])
 
-        # Export base datasets.
-        output_dir = Path('base') / str(year)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = (output_dir / ('GBO.Pre.010.' + str(year) +
-                                     str(month).zfill(2) + '.nc4'))
-        create_nc4(output_file, input_time, base.y, base.x,
-                   np.vstack(auxiliar_base))
-
-        # Export GLDAS25 datasets.
-        output_dir = Path('gldas25') / str(year)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = (output_dir / ('GBO.Pre.G225.' + str(year) +
-                                     str(month).zfill(2) + '.nc4'))
-        create_nc4(output_file, input_time, gldas25.y, gldas25.x,
-                   np.vstack(auxiliar_gldas25))
-
-        # Export GLDAS10 datasets.
-        output_dir = Path('gldas10') / str(year)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = (output_dir / ('GBO.Pre.G210.' + str(year) +
-                                     str(month).zfill(2) + '.nc4'))
-        create_nc4(output_file, input_time, gldas10.y, gldas10.x,
-                   np.vstack(auxiliar_gldas10))
-
-        # Export MERRA2 datasets.
-        output_dir = Path('merra') / str(year)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = (output_dir / ('GBO.Pre.M2.' + str(year) +
-                                     str(month).zfill(2) + '.nc4'))
-        create_nc4(output_file, input_time, merra.y, merra.x,
-                   np.vstack(auxiliar_merra))
-
-        del(distmat, base, gldas25, gldas10, merra)
-        gc.collect()   # Trying to free some memory
+        # Export basin_grid datasets.
+        output_file = (config['general']['output_dir'] + '/sg30057_prec100m_' +
+                       str(year) + '.nc4')
+        output_dataarray.to_netcdf(
+                path=output_file,
+                mode='w',
+                format='NETCDF4')
+        progress_bar(current=(yy + 1), total=len(years), message=(
+                "- Interpolating daily records and exporting annual datasets"))
