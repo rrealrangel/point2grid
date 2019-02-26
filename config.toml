@@ -1,21 +1,21 @@
 # Configuration file for rasterize-precipitation project.
 
-[general]
-    maxMissedData = 0.20
-    xmin = 3433000
-    xmax=3454200
-    ymin=612300
-    ymax=649700
-    xres=100
-    yres=100
+[inputs]
+    climatological_stations = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/maps/sg30057_climatological-stations.shp'
+    dem = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/maps/g30057_dem.tif'
+    datasets = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/data/precipitation/qc_outputs'
+
+[outputs]
     output_dir = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/data/precipitation/gridded_dataset/outputs'
 
-[vector_maps]
-    climatological_stations = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/maps/sg30057_climatological-stations.shp'
+[region]
+    xmin = 3433000
+    xmax = 3454200
+    ymin = 612300
+    ymax = 649700
+    xres = 1000
+    yres = 1000
 
-[raster_maps]
-    dem = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/maps/g30057_dem.tif'
-
-[datasets]
-    climatological_data = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/data/precipitation/qc_outputs'
-    precipitation_ts = 'C:/Users/rreal/OneDrive/documentos/proyectos/2017/evaluacion_gldas_merra/analisis/precipitation/inputs/precipitation_database_1980-2015.csv'
+[analysis]
+    max_distance = 100000
+    gaps_ratio = 0.20

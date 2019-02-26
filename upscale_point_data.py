@@ -66,12 +66,9 @@ class GridDataset:
 
 
 def progress_bar(current, total, message="- Processing"):
-    # TODO: Add a customized text about what process is being performed.
     progress = float(current)/total
-
-    sys.stdout.write(
-            "\r    {} ({:.1f} % processed)".format(
-                    message, progress * 100))
+    sys.stdout.write("\r    {} ({:.1f} % processed)".format(
+            message, progress * 100))
 
     if progress < 1:
         sys.stdout.flush()
@@ -142,25 +139,6 @@ def interpolate_idw(distances, values, power=2):
         return(np.nan)
 
 
-def retrieve_dem_coords(input_file):
-    """ List the centroids of the cells in a raster map.
-    Parameters
-        input_file: string
-
-    References
-        https://bit.ly/2Ewwihq
-    """
-    driver = gdal.GetDriverByName('GTiff')
-    raster = gdal.Open(input_file)
-    (x_min, x_size, x_rotation, y_max, y_rotation, y_size) = (
-            raster.GetGeoTransform())
-    cols = raster.RasterXSize
-    rows = raster.RasterYSize
-    x_coords = np.arange(cols) * x_size + x_min + (x_size / 2)
-    y_coords = np.arange(rows) * y_size + y_max + (y_size / 2)
-    return([(x, y) for y in y_coords for x in x_coords])
-
-
 def retrieve_dem_elev(input_file, points_list, nodata=-32768):
     """ Retrieve pixel value with coordinates as input.
     Parameters
@@ -199,13 +177,10 @@ def retrieve_dem_elev(input_file, points_list, nodata=-32768):
 
 
 if __name__ == "__main__":
-    station_time_series = gen_database(
-            input_dir=config['datasets']['climatological_data'])
-
+    station_time_series = gen_database(input_dir=config['inputs']['datasets'])
     attrs = {}
     input_list = sorted(list(Path(
-            config['datasets']['climatological_data']).glob(
-                    pattern='**/*.nc')))
+            config['inputs']['datasets']).glob(pattern='**/*.nc')))
 
     for st, station in enumerate(input_list):
         code = xr.open_dataset(station).attrs['ID']
@@ -237,15 +212,13 @@ if __name__ == "__main__":
         group_indices = station_time_series.loc[str(year)].index
 
         for count, date in enumerate(group_indices):
-            # Creating the output grid and populating the output matrix value.
-            # TODO: Read edges from config file.
             basin_grid = GridDataset(
-                    xmin=3433000,
-                    xmax=3454200,
-                    ymin=612300,
-                    ymax=649700,
-                    xres=500,
-                    yres=500)
+                    xmin=config['region']['xmin'],
+                    xmax=config['region']['xmax'],
+                    ymin=config['region']['ymin'],
+                    ymax=config['region']['ymax'],
+                    xres=config['region']['xres'],
+                    yres=config['region']['yres'])
 
             # Get available data for the given date.
             values = station_time_series.xs(date).dropna()
@@ -255,7 +228,7 @@ if __name__ == "__main__":
                     (attrs[i]['X_epsg6372'], attrs[i]['Y_epsg6372'],
                      attrs[i]['Z_epsg6372']) for i in values.keys()]
             grid_cells = retrieve_dem_elev(
-                    input_file=config['raster_maps']['dem'],
+                    input_file=config['inputs']['dem'],
                     points_list=[(x, y)
                                  for y in basin_grid.y
                                  for x in basin_grid.x])
@@ -263,15 +236,13 @@ if __name__ == "__main__":
                     distance_matrix(x=grid_cells, y=stations_points),
                     columns=values.index)
 
-            # TODO: Move this variable to the config file.
-            max_distance = 100000   # 100 km
-
             # Apply the IDW interpolation.
             for c, cell in enumerate(grid_cells):
                 x_index = np.where(basin_grid.x == cell[0])[0]
                 y_index = np.where(basin_grid.y == cell[1])[0]
                 cell_distances = distmat.iloc[c]
-                distances = cell_distances[(cell_distances < max_distance)]
+                distances = cell_distances[
+                        (cell_distances < config['analysis']['max_distance'])]
 
                 if len(distances) > 0:
                     basin_grid.values[y_index, x_index] = interpolate_idw(
@@ -289,7 +260,7 @@ if __name__ == "__main__":
                 dims=['time', 'north', 'east'])
 
         # Export basin_grid datasets.
-        output_file = (config['general']['output_dir'] + '/sg30057_prec100m_' +
+        output_file = (config['outputs']['output_dir'] + '/sg30057_prec100m_' +
                        str(year) + '.nc4')
         output_dataarray.to_netcdf(
                 path=output_file,
