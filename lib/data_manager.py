@@ -19,7 +19,6 @@ import numpy as np
 import sys
 
 from pathlib2 import Path
-from pyproj import Proj, transform
 import toml
 import xarray as xr
 

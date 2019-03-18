@@ -5,12 +5,6 @@ Converts a set of ground-based observations into a gridded dataset. It
 has been designed to work with the raw files of climatological
 observations from the Climatologic Database of the National
 Meteorological Service of Mexico (SMN).
-
-AUTHOR
-    Roberto A. Real-Rangel (Institute of Engineering UNAM; Mexico)
-
-LICENSE
-    GNU General Public License
 """
 __author__ = 'Roberto A. Real-Rangel (Institute of Engineering UNAM)'
 __license__ = 'GNU General Public License version 3'
