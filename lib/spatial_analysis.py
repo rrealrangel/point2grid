@@ -15,11 +15,10 @@ LICENSE
 __author__ = 'Roberto A. Real-Rangel (Institute of Engineering UNAM)'
 __license__ = 'GNU General Public License version 3'
 
-import numpy as np
-import osr
-
 import gdal
+import numpy as np
 import ogr
+import osr
 
 from data_manager import GridDataset
 
@@ -38,13 +37,17 @@ def get_shapefile_fields(map_file):
     data_source = ogr.Open(map_file)
     first_layer = data_source.GetLayer(0)
     layer_definition = first_layer.GetLayerDefn()
-    fields = [layer_definition.GetFieldDefn(i).GetName()
-              for i in range(layer_definition.GetFieldCount())]
+    fields = [
+        layer_definition.GetFieldDefn(i).GetName()
+        for i in range(layer_definition.GetFieldCount())
+        ]
     table = {}
 
     for feature in first_layer:
         table[feature.GetField('ID')] = {
-                field: feature.GetField(field) for field in fields}
+            field: feature.GetField(field)
+            for field in fields
+            }
 
     return(table)
 
@@ -65,7 +68,10 @@ def create_buffer(input_vmap, buffer_dist):
     proj = osr.SpatialReference()
     proj.SetWellKnownGeogCS("EPSG:6372")
     output_layer = output_source.CreateLayer(
-            'Buffer', geom_type=ogr.wkbPolygon, srs=proj)
+        'Buffer',
+        geom_type=ogr.wkbPolygon,
+        srs=proj
+        )
     feature_definition = output_layer.GetLayerDefn()
 
     for feature in input_layer:
@@ -128,17 +134,18 @@ def interpolate_idw(distances, values, power=2):
     # Return NODATA if the denominator is zero
     if denominator > 0:
         return(nominator/denominator)
+
     else:
         return(np.nan)
 
 
-def inregion_cells(study_region, res, nodata):
+def inregion_cells(basin_vmap, res, nodata):
     """
     Source:
         https://bit.ly/2HxeOng
     """
     # Open the data source and read in the extent
-    source_ds = ogr.Open(study_region)
+    source_ds = ogr.Open(basin_vmap)
     source_layer = source_ds.GetLayer(0)
     xmin, xmax, ymin, ymax = source_layer.GetExtent()
 
@@ -160,7 +167,8 @@ def inregion_cells(study_region, res, nodata):
     cols = int((xmax - xmin) / res)
     rows = int((ymax - ymin) / res)
     output_source = gdal.GetDriverByName('MEM').Create(
-            '', cols, rows, gdal.GDT_Byte)
+        '', cols, rows, gdal.GDT_Byte
+        )
     output_source.SetGeoTransform((xmin, res, 0, ymax, 0, -res))
     output_band = output_source.GetRasterBand(1)
     output_band.SetNoDataValue(nodata)
@@ -178,7 +186,13 @@ def inregion_cells(study_region, res, nodata):
                 cells.append([x_coord, y_coord])
 
     grid = GridDataset(
-            xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, xres=res, yres=res)
+        xmin=xmin,
+        xmax=xmax,
+        ymin=ymin,
+        ymax=ymax,
+        xres=res,
+        yres=res
+        )
 
     return(cells, grid)
 
@@ -195,7 +209,8 @@ def retrieve_elevation(input_rmap, coordinates, res, nodata):
     cols = input_source.RasterXSize
     rows = input_source.RasterYSize
     (xmin, x_size, x_rotation, ymax, y_rotation, y_size) = (
-            input_source.GetGeoTransform())
+        input_source.GetGeoTransform()
+        )
     y_size = y_size * -1
     data = input_band.ReadAsArray(0, 0, cols, rows).astype(float)
     data[data == nodata] = np.nan
@@ -204,17 +219,22 @@ def retrieve_elevation(input_rmap, coordinates, res, nodata):
     y_coords = y_coords[::-1]
 
     for p, point in enumerate(coordinates):
-        irows = np.where((y_coords > (point[1] - (res / 2))) &
-                         (y_coords < (point[1] + (res / 2))))[0]
-        icols = np.where((x_coords > (point[0] - (res / 2))) &
-                         (x_coords < (point[0] + (res / 2))))[0]
+        irows = np.where(
+            (y_coords > (point[1] - (res / 2))) &
+            (y_coords < (point[1] + (res / 2)))
+            )[0]
+        icols = np.where(
+            (x_coords > (point[0] - (res / 2))) &
+            (x_coords < (point[0] + (res / 2)))
+            )[0]
         coordinates[p].append(
-                np.mean([data[i, j] for i in irows for j in icols]))
+            np.mean([data[i, j] for i in irows for j in icols])
+            )
 
     return(coordinates)
 
 
-def filter_stations(catalog_vmap, study_region, buffer_dist=80000):
+def filter_stations(catalog_vmap, basin_vmap, buffer_dist=80000):
     """Return a subset of climatological stations filtered by location.
 
     Filter a catalog of climatological stations of the Climatological
@@ -226,7 +246,7 @@ def filter_stations(catalog_vmap, study_region, buffer_dist=80000):
         catalog_vmap : string
             Full path of the vector map (shapefile) that contains the
             catalog of climatolog stations of the BDC.
-        study_region : string
+        basin_vmap : string
             Full path of the vector map (shapefile) that contains the
             region of interest.
         buffer_dist : float or integer, optional
@@ -245,13 +265,15 @@ def filter_stations(catalog_vmap, study_region, buffer_dist=80000):
 
     # Get region of influence (buffer) of the catchment.
     buffer_region = create_buffer(
-            input_vmap=study_region,
-            buffer_dist=buffer_dist)
+        input_vmap=basin_vmap,
+        buffer_dist=buffer_dist
+        )
 
     # Filter datasets within the buffer region.
     inregion_vmap = spatial_filter(features=catalog_vmap, ref=buffer_region)
     inregion_attrs = {
-            st.GetField('ID'): catalog_attrs[st.GetField('ID')]
-            for st in inregion_vmap[0]}
+        st.GetField('ID'): catalog_attrs[st.GetField('ID')]
+        for st in inregion_vmap[0]
+        }
 
     return(inregion_vmap, inregion_attrs)

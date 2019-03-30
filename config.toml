@@ -1,21 +1,36 @@
 # Configuration file for rasterize-precipitation project.
 
-[inputs]
-    climatological_stations = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/maps/sg30057_climatological-stations.shp'
-    dem = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/maps/g30057_dem.tif'
-    datasets = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/data/precipitation/qc_outputs'
+# Inputs
+catalog_vmap = '/media/realrangel/AREAL TURBO/geoinfo/climatologia/climatologic_stations/smn_bdc/data/epsg_6372/smn_bdc_stations.shp'
+catalog_dir = '/media/realrangel/AREAL TURBO/datasets/smn_bdc/v2018.06/data_nc'
+dem = '/media/realrangel/AREAL TURBO/geoinfo/topografia/terrestre/cem30/CEM_V3_20170619_R120_E14/Jalisco15_r120m_epsg6372.tif'
+basin_vmap = '/home/realrangel/MEGA/projects/2019/2019-01_cathments-classification/main/analisys/catchments/15014_higuera_blanca_ii/basin/basin.shp'
 
-[outputs]
-    output_dir = '/home/rrealrangel/MEGA/proyectos/2019/2019-inv-01_cathments-classification/main/analisys/sg30057/data/precipitation/gridded_dataset/outputs'
+# Outputs
+out_directory = '/home/realrangel/MEGA/projects/2019/2019-01_cathments-classification/main/analisys/catchments/15014_higuera_blanca_ii/temperature_max'
 
-[region]
+# Analysis parameters
+variable = 'tmax'
+max_distance = 80000
+par_gaps_ratio = 0.20
+
+# Region
+[grid_spec]
     xmin = 3433000
     xmax = 3454200
     ymin = 612300
     ymax = 649700
-    xres = 1000
-    yres = 1000
+    res = 5000
+    nodata=-32768
 
-[analysis]
-    max_distance = 100000
-    gaps_ratio = 0.20
+# Quality control
+[qc]
+    apply = true
+    std_thresh = 4.89164
+    climatology = true
+    gross_range_test = false
+    climatology_test = true
+    spikes_data_test = false
+    change_rate_test = true
+    flat_series_test = true
+    tmp_outlier_test = false

@@ -15,10 +15,10 @@ LICENSE
 __author__ = 'Roberto A. Real-Rangel (Institute of Engineering UNAM)'
 __license__ = 'GNU General Public License version 3'
 
-import numpy as np
 import sys
 
 from pathlib2 import Path
+import numpy as np
 import toml
 import xarray as xr
 
@@ -46,24 +46,37 @@ class GridDataset:
         self.ymax = ymax
         self.xres = xres
         self.yres = yres
-        self.x = np.round(np.arange(
-                self.xmin + (self.xres / 2), self.xmax, self.xres), 4)
-        self.y = np.round(np.arange(
-                self.ymin + (self.yres / 2), self.ymax, self.yres), 4)
+        self.x = np.round(
+            np.arange(
+                self.xmin + (self.xres / 2),
+                self.xmax,
+                self.xres
+                ), 4
+            )
+        self.y = np.round(
+            np.arange(
+                self.ymin + (self.yres / 2),
+                self.ymax,
+                self.yres
+                ), 4
+            )
         self.values = np.zeros((len(self.y), len(self.x))) * np.nan
 
     def resample(self, new_grid):
         output = np.zeros((len(new_grid.y), len(new_grid.x))) * np.nan
         for i, x in enumerate(new_grid.x):
             for j, y in enumerate(new_grid.y):
-                output[j, i] = np.nanmean(
-                        [self.values[m, n]
-                            for m in np.where(
-                                    (self.y >= (y - (new_grid.yres / 2))) &
-                                    (self.y <= (y + (new_grid.yres / 2))))[0]
-                            for n in np.where(
-                                    (self.x >= (x - (new_grid.xres / 2))) &
-                                    (self.x <= (x + (new_grid.xres / 2))))[0]])
+                output[j, i] = np.nanmean([
+                    self.values[m, n]
+                    for m in np.where(
+                        (self.y >= (y - (new_grid.yres / 2))) &
+                        (self.y <= (y + (new_grid.yres / 2)))
+                        )[0]
+                    for n in np.where(
+                        (self.x >= (x - (new_grid.xres / 2))) &
+                        (self.x <= (x + (new_grid.xres / 2)))
+                        )[0]
+                    ])
 
         return(output)
 
@@ -72,10 +85,14 @@ class GridDataset:
 
         for i, x in enumerate(self.x):
             for j, y in enumerate(self.y):
-                if np.sum((stations_x >= (x - (self.xres/2))) &
-                          (stations_x <= (x + (self.xres/2))) &
-                          (stations_y >= (y - (self.yres/2))) &
-                          (stations_y <= (y + (self.yres/2)))) >= min_stations:
+                min_stations_condition = np.sum(
+                    (stations_x >= (x - (self.xres/2))) &
+                    (stations_x <= (x + (self.xres/2))) &
+                    (stations_y >= (y - (self.yres/2))) &
+                    (stations_y <= (y + (self.yres/2)))
+                    ) >= min_stations
+
+                if min_stations_condition:
                     output[j, i] = self.values[j, i]
 
         return(output)
@@ -112,15 +129,19 @@ def get_elevation(catalog_dir, inregion_attrs):
         for path in catalog_paths:
             if station in str(path):
                 inregion_attrs[station]['Elevation'] = xr.open_dataset(
-                        path).attrs['Elevation']
+                    path
+                    ).attrs['Elevation']
 
     return(inregion_attrs)
 
 
 def progress_bar(current, total, message="- Processing"):
     progress = float(current)/total
-    sys.stdout.write("\r    {} ({:.1f} % processed)".format(
-            message, progress * 100))
+    sys.stdout.write(
+        "\r    {} ({:.1f} % processed)".format(
+            message, progress * 100
+            )
+        )
 
     if progress < 1:
         sys.stdout.flush()
@@ -156,40 +177,46 @@ def gen_database(catalog_dir, inregion_attrs, variable, qc):
             # Perform tests to raw data.
             if qc['gross_range_test']:
                 time_series[variable + 'gross_range_test'] = qct.range_test(
-                        input_ts=time_series[variable],
-                        threshold=qc['std_thresh'],
-                        climatology=qc['climatology'])
+                    input_ts=time_series[variable],
+                    threshold=qc['std_thresh'],
+                    climatology=qc['climatology']
+                    )
 
             if qc['climatology_test']:
                 time_series[variable + '_climtest'] = qct.range_test(
-                        input_ts=time_series[variable],
-                        threshold=qc['std_thresh'],
-                        climatology=qc['climatology'])
+                    input_ts=time_series[variable],
+                    threshold=qc['std_thresh'],
+                    climatology=qc['climatology']
+                    )
 
             if qc['spikes_data_test']:
                 time_series[variable + '_spiktest'] = qct.spikes_data_test(
-                        input_ts=time_series[variable],
-                        threshold=qc['std_thresh'],
-                        climatology=qc['climatology'])
+                    input_ts=time_series[variable],
+                    threshold=qc['std_thresh'],
+                    climatology=qc['climatology']
+                    )
 
             if qc['change_rate_test']:
                 time_series[variable + '_chrttest'] = qct.change_rate_test(
-                        input_ts=time_series[variable],
-                        threshold=qc['std_thresh'],
-                        climatology=qc['climatology'])
+                    input_ts=time_series[variable],
+                    threshold=qc['std_thresh'],
+                    climatology=qc['climatology']
+                    )
 
             if qc['flat_series_test']:
                 time_series[variable + '_flattest'] = qct.flat_series_test(
-                        input_ts=time_series[variable],
-                        value_tolerance=0.0,
-                        repetitions_tolerance=2,
-                        skipzero=qc['climatology'])
+                    input_ts=time_series[variable],
+                    value_tolerance=0.0,
+                    repetitions_tolerance=2,
+                    skipzero=qc['climatology']
+                    )
 
             if qc['tmp_outlier_test']:
                 time_series[variable + '_outltest'] = qct.tmp_outlier_test(
-                        input_ts=time_series[variable],
-                        c=7.5,
-                        threshold=qc['std_thresh'])
+                    input_ts=time_series[variable],
+                    c=7.5,
+                    threshold=qc['std_thresh']
+                    )
 
             # Remove suspicious values.
             tests = [i for i in time_series.var().keys() if i != variable]
@@ -211,8 +238,11 @@ def gen_database(catalog_dir, inregion_attrs, variable, qc):
             # (gaps / dataset['precipitation'].size) > threshold
             inregion_data[station['ID']] = time_series[variable].copy()
             progress_bar(
-                    current=(st + 1), total=len(inregion_attrs),
-                    message=("- Retrieving precipitation data from"
-                             " climatological stations in the region"))
+                current=(st + 1), total=len(inregion_attrs),
+                message=(
+                    "- Retrieving {} data from climatological stations in the "
+                    "region"
+                    ).format(variable)
+                )
 
     return(inregion_data.to_dataframe())
